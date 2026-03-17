@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { BookOpen, Clock, Trash2, Upload } from "lucide-react";
 import { motion } from "motion/react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { BookMetadata } from "../backend.d";
 import { FileType } from "../backend.d";
@@ -98,6 +98,8 @@ export default function LibraryPage({
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const { uploadFile } = useBlobStorage();
+  // Keep uploaded files in memory so the reader can access them
+  const fileMapRef = useRef<Map<string, File>>(new Map());
 
   const displayBooks = books && books.length > 0 ? books : SAMPLE_BOOKS;
 
@@ -114,8 +116,9 @@ export default function LibraryPage({
             : ext === "epub"
               ? FileType.epub
               : FileType.txt;
+        const bookId = crypto.randomUUID();
         const book: BookMetadata = {
-          id: crypto.randomUUID(),
+          id: bookId,
           title: extracted.title,
           author: extracted.author,
           filePath: filePath || file.name,
@@ -123,8 +126,12 @@ export default function LibraryPage({
           fileType,
           uploadTime: BigInt(Date.now() * 1_000_000),
         };
+        // Store the file so the reader can use it directly
+        fileMapRef.current.set(bookId, file);
         addBook(book);
         toast.success(`"${book.title}" added to your library!`);
+        // Open reader immediately with the file so content loads correctly
+        onOpenReader(book, file);
       } catch (e) {
         toast.error("Failed to process file. Please try again.");
         console.error(e);
@@ -132,7 +139,7 @@ export default function LibraryPage({
         setUploading(false);
       }
     },
-    [addBook, uploadFile],
+    [addBook, uploadFile, onOpenReader],
   );
 
   const handleDrop = useCallback(
@@ -143,6 +150,14 @@ export default function LibraryPage({
       if (file) handleFileUpload(file);
     },
     [handleFileUpload],
+  );
+
+  const handleOpenBook = useCallback(
+    (book: BookMetadata) => {
+      const file = fileMapRef.current.get(book.id);
+      onOpenReader(book, file);
+    },
+    [onOpenReader],
   );
 
   return (
@@ -170,7 +185,7 @@ export default function LibraryPage({
         </Button>
       </div>
 
-      {/* Drop zone — using a label wrapping a hidden input for native drag+click support */}
+      {/* Drop zone */}
       <label
         onDragOver={(e) => {
           e.preventDefault();
@@ -192,6 +207,8 @@ export default function LibraryPage({
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) handleFileUpload(file);
+            // Reset input so same file can be re-uploaded
+            e.target.value = "";
           }}
         />
         {uploading ? (
@@ -265,7 +282,7 @@ export default function LibraryPage({
                 background: "oklch(0.148 0.022 40)",
                 border: "1px solid oklch(0.24 0.025 45 / 0.6)",
               }}
-              onClick={() => onOpenReader(book)}
+              onClick={() => handleOpenBook(book)}
               data-ocid={`library.item.${idx + 1}`}
             >
               {/* Cover art */}
